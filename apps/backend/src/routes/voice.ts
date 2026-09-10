@@ -1,44 +1,50 @@
 import { FastifyInstance } from 'fastify';
-import { synthesizeSpeech } from '../services/voice';
+import { synthesizeSpeech, transcribeAudio } from '../services/voice';
 import { RelayOrchestrator } from '../orchestrator/index';
 
 export const voiceRoutes = async (app: FastifyInstance) => {
 
-  // TTS: Convert Relay text response to audio
+  // TTS: Text to speech
   app.post('/api/voice/speak', async (request, reply) => {
     try {
-      const { text, voiceId } = request.body as { 
-        text: string; 
-        voiceId?: string 
-      };
-
+      const { text, voiceId } = request.body as { text: string; voiceId?: string };
       const audioBuffer = await synthesizeSpeech(text, voiceId);
-
       return reply
         .header('Content-Type', 'audio/mpeg')
-        .header('Content-Length', audioBuffer.length)
         .send(audioBuffer);
-
     } catch (err: any) {
       return reply.status(500).send({ error: err.message });
     }
   });
 
-    // STT: Accept audio form upload + transcribe
+  // STT: Audio file to text
   app.post('/api/voice/transcribe-form', async (request, reply) => {
     try {
-      const data = await request.file();
-      if (!data) return reply.status(400).send({ error: 'No audio file' });
+      const parts = request.parts();
+      let audioBuffer: Buffer | null = null;
+      let language = 'en';
 
-      const chunks: Buffer[] = [];
-      for await (const chunk of data.file) {
-        chunks.push(chunk);
+      for await (const part of parts) {
+        if (part.type === 'file') {
+          const chunks: Buffer[] = [];
+          for await (const chunk of part.file) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          }
+          audioBuffer = Buffer.concat(chunks);
+        } else if (part.type === 'field' && part.fieldname === 'language') {
+          language = part.value as string;
+        }
       }
-      const audioBuffer = Buffer.concat(chunks);
-      const language = (request.query as any).language || 'en';
 
-      const { transcribeAudio } = await import('../services/voice');
+      if (!audioBuffer || audioBuffer.length === 0) {
+        return reply.status(400).send({ error: 'No audio received' });
+      }
+
+      console.log(`🎤 Transcribing ${audioBuffer.length} bytes, language: ${language}`);
+
       const result = await transcribeAudio(audioBuffer, language);
+
+      console.log(`📝 Transcript: "${result.text}" (confidence: ${result.confidence})`);
 
       return reply.send({
         success: true,
@@ -47,11 +53,12 @@ export const voiceRoutes = async (app: FastifyInstance) => {
       });
 
     } catch (err: any) {
+      console.error('❌ Transcribe error FULL:', err);
       return reply.status(500).send({ error: err.message });
     }
   });
 
-  // SPEAK + PROCESS: Full voice round trip
+  // Full conversation round trip
   app.post('/api/voice/conversation', async (request, reply) => {
     try {
       const { text, state, voiceId } = request.body as {
@@ -62,11 +69,7 @@ export const voiceRoutes = async (app: FastifyInstance) => {
 
       const dealerId = process.env.DEALER_ID!;
       const orchestrator = new RelayOrchestrator(dealerId);
-
-      // Get Relay text response
       const result = await orchestrator.processInput(state, text);
-
-      // Convert to audio
       const audioBuffer = await synthesizeSpeech(result.response, voiceId);
       const audioBase64 = audioBuffer.toString('base64');
 

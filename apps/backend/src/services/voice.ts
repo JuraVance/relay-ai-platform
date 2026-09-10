@@ -1,15 +1,16 @@
 // ============================================================
 // RELAY VOICE SERVICE
 // Vendor agnostic STT + TTS
-// Swap any provider via VOICE_STT_PROVIDER + VOICE_TTS_PROVIDER in .env
+// Swap any provider via STT_PROVIDER + TTS_PROVIDER in .env
 // Providers: deepgram | grok | elevenlabs | azure | google
 // ============================================================
 
 import dotenv from 'dotenv';
-dotenv.config();
+import path from 'path';
+dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 // ============================================================
-// INTERFACES (The contract — providers must implement these)
+// INTERFACES
 // ============================================================
 
 export interface STTProvider {
@@ -26,21 +27,25 @@ export interface TTSProvider {
 
 class DeepgramSTT implements STTProvider {
   async transcribe(audioBuffer: Buffer, language = 'en') {
-    const sdk = require('@deepgram/sdk');
-    const client = sdk.createClient
-      ? sdk.createClient(process.env.DEEPGRAM_API_KEY!)
-      : new sdk.Deepgram(process.env.DEEPGRAM_API_KEY!);
-
     try {
-      const response = await client.listen.prerecorded.transcribeFile(audioBuffer, {
-        model: 'nova-2',
-        language,
-        smart_format: true,
-        punctuate: true,
-      });
+      const { DeepgramClient } = require('@deepgram/sdk');
+      const client = new DeepgramClient(process.env.DEEPGRAM_API_KEY!);
+      const response = await client.listen.prerecorded.transcribeFile(
+        audioBuffer,
+        {
+          model: 'nova-2',
+          language,
+          smart_format: true,
+          punctuate: true,
+        }
+      );
       const alt = response?.result?.results?.channels[0]?.alternatives[0];
-      return { text: alt?.transcript || '', confidence: alt?.confidence || 0 };
-    } catch {
+      return {
+        text: alt?.transcript || '',
+        confidence: alt?.confidence || 0,
+      };
+    } catch (err: any) {
+      console.error('❌ Deepgram error:', err.message);
       return { text: '', confidence: 0 };
     }
   }
@@ -48,9 +53,73 @@ class DeepgramSTT implements STTProvider {
 
 class GrokSTT implements STTProvider {
   async transcribe(audioBuffer: Buffer, language = 'en') {
-    // Grok STT integration — swap in when ready
-    console.log('Grok STT: not yet implemented, falling back');
-    return { text: '', confidence: 0 };
+    try {
+      const FormData = require('form-data');
+      const form = new FormData();
+      form.append('file', audioBuffer, {
+        filename: 'audio.webm',
+        contentType: 'audio/webm',
+      });
+      form.append('model', 'whisper-large-v3');
+      form.append('language', language);
+      form.append('response_format', 'json');
+
+      const response = await fetch('https://api.x.ai/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.GROK_API_KEY}`,
+          ...form.getHeaders(),
+        },
+        body: form,
+      });
+
+      console.log('Grok STT status:', response.status);
+      const responseText = await response.text();
+      console.log('Grok STT response:', responseText);
+
+      if (!response.ok) throw new Error(responseText);
+      const data = JSON.parse(responseText) as { text: string };
+      return { text: data.text || '', confidence: 0.95 };
+
+    } catch (err: any) {
+      console.error('❌ Grok STT error:', err.message);
+      return { text: '', confidence: 0 };
+    }
+  }
+}
+
+class ElevenLabsSTT implements STTProvider {
+  async transcribe(audioBuffer: Buffer, language = 'en') {
+    try {
+      const FormData = require('form-data');
+      const form = new FormData();
+      form.append('file', audioBuffer, {
+        filename: 'audio.webm',
+        contentType: 'audio/webm',
+      });
+      form.append('model_id', 'scribe_v1');
+
+      const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+        method: 'POST',
+        headers: {
+          'xi-api-key': process.env.ELEVENLABS_API_KEY!,
+          ...form.getHeaders(),
+        },
+        body: form,
+      });
+
+      console.log('ElevenLabs STT status:', response.status);
+      const responseText = await response.text();
+      console.log('ElevenLabs STT response:', responseText);
+
+      if (!response.ok) throw new Error(responseText);
+      const data = JSON.parse(responseText) as { text: string };
+      return { text: data.text || '', confidence: 0.95 };
+
+    } catch (err: any) {
+      console.error('❌ ElevenLabs STT error:', err.message);
+      return { text: '', confidence: 0 };
+    }
   }
 }
 
@@ -93,28 +162,30 @@ class ElevenLabsTTS implements TTSProvider {
 
 class GrokTTS implements TTSProvider {
   async synthesize(text: string, voiceId?: string): Promise<Buffer> {
-    // Grok TTS integration — swap in when ready
-    console.log('Grok TTS: not yet implemented, falling back to ElevenLabs');
+    console.log('Grok TTS: falling back to ElevenLabs');
     return new ElevenLabsTTS().synthesize(text, voiceId);
   }
 }
 
 // ============================================================
-// FACTORY: Pick provider from .env
-// STT_PROVIDER=deepgram | grok
-// TTS_PROVIDER=elevenlabs | grok
+// FACTORY
 // ============================================================
 
 const getSTTProvider = (): STTProvider => {
-  switch ((process.env.STT_PROVIDER || 'deepgram').toLowerCase()) {
-    case 'grok':    return new GrokSTT();
-    case 'deepgram':
-    default:        return new DeepgramSTT();
+  const provider = process.env.STT_PROVIDER || 'elevenlabs';
+  console.log('🎤 STT Provider selected:', provider);
+  switch (provider.toLowerCase()) {
+    case 'grok':       return new GrokSTT();
+    case 'deepgram':   return new DeepgramSTT();
+    case 'elevenlabs':
+    default:           return new ElevenLabsSTT();
   }
 };
 
 const getTTSProvider = (): TTSProvider => {
-  switch ((process.env.TTS_PROVIDER || 'elevenlabs').toLowerCase()) {
+  const provider = process.env.TTS_PROVIDER || 'elevenlabs';
+  console.log('🔊 TTS Provider selected:', provider);
+  switch (provider.toLowerCase()) {
     case 'grok':       return new GrokTTS();
     case 'elevenlabs':
     default:           return new ElevenLabsTTS();
@@ -122,7 +193,7 @@ const getTTSProvider = (): TTSProvider => {
 };
 
 // ============================================================
-// PUBLIC API (What the rest of Relay uses)
+// PUBLIC API
 // ============================================================
 
 export const transcribeAudio = async (
