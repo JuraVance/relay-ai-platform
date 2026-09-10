@@ -15,5 +15,8 @@
     "@types/node": "^22.20.2",
     "prettier": "^3.1.0",
     "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0"
   }
 }
