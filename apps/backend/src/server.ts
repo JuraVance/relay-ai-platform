@@ -1,18 +1,16 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import dotenv from 'dotenv';
+import { testConnection } from './services/supabase';
 
 dotenv.config();
 
-const app = Fastify({
-  logger: true,
-});
+const app = Fastify({ logger: true });
 
 app.register(cors, {
   origin: process.env.KIOSK_URL || 'http://localhost:3000',
 });
 
-// Health check
 app.get('/health', async () => {
   return { 
     status: 'ok', 
@@ -21,9 +19,11 @@ app.get('/health', async () => {
   };
 });
 
-// Start
 const start = async () => {
   try {
+    // Test Supabase connection on startup
+    await testConnection();
+    
     const port = parseInt(process.env.PORT || '3001', 10);
     await app.listen({ port, host: '0.0.0.0' });
     console.log(`🚀 Relay Backend running on http://localhost:${port}`);
