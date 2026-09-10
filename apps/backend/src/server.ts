@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import dotenv from 'dotenv';
 import { testConnection } from './services/supabase';
 import { sessionRoutes } from './routes/session';
+import { voiceRoutes } from './routes/voice';
 
 dotenv.config();
 
@@ -21,7 +22,7 @@ app.get('/health', async () => {
 });
 
 app.register(sessionRoutes);
-
+app.register(voiceRoutes);
 const start = async () => {
   try {
     await testConnection();

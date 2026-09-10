@@ -1,7 +1,6 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 const API_URL = 'http://localhost:3001';
-const DEALER_ID = '5c474542-46d7-4ed3-a73d-9cb17ff4b5d7';
 
 export default function Home() {
   const [started, setStarted] = useState(false);
@@ -9,7 +8,33 @@ export default function Home() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [state, setState] = useState<any>(null);
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const playAudio = async (text: string) => {
+    try {
+      setIsSpeaking(true);
+      const res = await fetch(`${API_URL}/api/voice/speak`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => setIsSpeaking(false);
+      audio.play();
+    } catch {
+      setIsSpeaking(false);
+    }
+  };
 
   const startSession = async () => {
     setLoading(true);
@@ -23,41 +48,37 @@ export default function Home() {
       setState(data.state);
       setStarted(true);
 
-      // Send first message to get Relay's greeting
       const msgRes = await fetch(`${API_URL}/api/sessions/${data.sessionId}/message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: 'Hello',
-          state: data.state,
-        }),
+        body: JSON.stringify({ text: 'Hello', state: data.state }),
       });
       const msgData = await msgRes.json();
       setMessages([{ role: 'relay', text: msgData.response }]);
       setState(msgData.state);
+      await playAudio(msgData.response);
     } catch (err) {
       console.error(err);
     }
     setLoading(false);
   };
 
-  const sendMessage = async () => {
-    if (!input.trim() || loading) return;
-
-    const userText = input;
+  const sendMessage = async (text: string) => {
+    if (!text.trim() || loading) return;
     setInput('');
-    setMessages(prev => [...prev, { role: 'customer', text: userText }]);
+    setMessages(prev => [...prev, { role: 'customer', text }]);
     setLoading(true);
 
     try {
       const res = await fetch(`${API_URL}/api/sessions/${state.sessionId}/message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: userText, state }),
+        body: JSON.stringify({ text, state }),
       });
       const data = await res.json();
       setMessages(prev => [...prev, { role: 'relay', text: data.response }]);
       setState(data.state);
+      await playAudio(data.response);
     } catch (err) {
       console.error(err);
     }
@@ -123,8 +144,16 @@ export default function Home() {
         justifyContent: 'space-between',
       }}>
         <div style={{ fontSize: '20px', fontWeight: '700', letterSpacing: '-0.5px' }}>Relay</div>
-        <div style={{ fontSize: '12px', opacity: 0.4, letterSpacing: '2px' }}>
-          {state?.currentStage}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {isSpeaking && (
+            <div style={{ 
+              width: '8px', height: '8px', borderRadius: '50%', 
+              background: '#4ade80', animation: 'pulse 1s infinite' 
+            }} />
+          )}
+          <div style={{ fontSize: '12px', opacity: 0.4, letterSpacing: '2px' }}>
+            {isSpeaking ? 'SPEAKING' : state?.currentStage}
+          </div>
         </div>
         <div style={{ fontSize: '12px', opacity: 0.4 }}>NewRoads Mazda</div>
       </div>
@@ -150,7 +179,6 @@ export default function Home() {
               background: msg.role === 'customer' ? '#0f3460' : 'rgba(255,255,255,0.08)',
               fontSize: '16px',
               lineHeight: '1.5',
-              color: 'white',
             }}>
               {msg.text}
             </div>
@@ -178,12 +206,14 @@ export default function Home() {
         borderTop: '1px solid rgba(255,255,255,0.08)',
         display: 'flex',
         gap: '12px',
+        alignItems: 'center',
       }}>
         <input
           value={input}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && sendMessage()}
+          onKeyDown={e => e.key === 'Enter' && sendMessage(input)}
           placeholder="Type your message..."
+          disabled={loading || isSpeaking}
           style={{
             flex: 1,
             background: 'rgba(255,255,255,0.08)',
@@ -196,8 +226,8 @@ export default function Home() {
           }}
         />
         <button
-          onClick={sendMessage}
-          disabled={loading}
+          onClick={() => sendMessage(input)}
+          disabled={loading || isSpeaking}
           style={{
             background: 'white',
             color: '#0a0a0a',
@@ -207,6 +237,7 @@ export default function Home() {
             fontSize: '16px',
             fontWeight: '600',
             cursor: 'pointer',
+            opacity: loading || isSpeaking ? 0.5 : 1,
           }}>
           Send
         </button>
