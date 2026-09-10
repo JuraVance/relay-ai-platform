@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import dotenv from 'dotenv';
 import { testConnection } from './services/supabase';
+import { sessionRoutes } from './routes/session';
 
 dotenv.config();
 
@@ -19,11 +20,11 @@ app.get('/health', async () => {
   };
 });
 
+app.register(sessionRoutes);
+
 const start = async () => {
   try {
-    // Test Supabase connection on startup
     await testConnection();
-    
     const port = parseInt(process.env.PORT || '3001', 10);
     await app.listen({ port, host: '0.0.0.0' });
     console.log(`🚀 Relay Backend running on http://localhost:${port}`);
