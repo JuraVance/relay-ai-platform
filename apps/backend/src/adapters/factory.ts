@@ -16,7 +16,6 @@ import {
 } from './inventory/types';
 
 // Dealer adapter configuration
-// Loaded from dealer config in Supabase
 export interface DealerAdapterConfig {
   inventory: 'edealer' | 'jato' | 'dealer_com' | 'csv' | 'manual';
   dms: 'cdk' | 'reynolds' | 'pbs' | 'tekion' | 'dealertrack' | 'none';
@@ -30,8 +29,8 @@ export interface DealerAdapterConfig {
 // Default config for NewRoads Mazda MVP
 export const DEFAULT_ADAPTER_CONFIG: DealerAdapterConfig = {
   inventory: 'edealer',
-  dms: 'none',           // Phase 3
-  crm: 'none',           // Phase 2
+  dms: 'none',
+  crm: 'none',
   identity: 'persona',
   otp: 'twilio',
   finance: 'jdpower',
@@ -39,25 +38,21 @@ export const DEFAULT_ADAPTER_CONFIG: DealerAdapterConfig = {
 };
 
 // ============================================================
-// FACTORY: Returns correct adapter based on dealer config
+// FACTORY
 // ============================================================
 
 export class AdapterFactory {
-  
+
   static getInventoryAdapter(config: DealerAdapterConfig): InventoryAdapter {
     switch (config.inventory) {
       case 'edealer':
-        const { EdealerAdapter } = require('./inventory/edealer');
-        return new EdealerAdapter();
+        throw new Error('eDealer adapter: coming when SFTP feed arrives');
       case 'jato':
-        const { JatoAdapter } = require('./inventory/jato');
-        return new JatoAdapter();
+        throw new Error('JATO adapter: not yet implemented');
       case 'dealer_com':
-        const { DealerComAdapter } = require('./inventory/dealer_com');
-        return new DealerComAdapter();
+        throw new Error('Dealer.com adapter: not yet implemented');
       case 'csv':
-        const { CsvAdapter } = require('./inventory/csv');
-        return new CsvAdapter();
+        throw new Error('CSV adapter: not yet implemented');
       default:
         throw new Error(`Unknown inventory adapter: ${config.inventory}`);
     }
@@ -66,11 +61,9 @@ export class AdapterFactory {
   static getOTPAdapter(config: DealerAdapterConfig): OTPAdapter {
     switch (config.otp) {
       case 'twilio':
-        const { TwilioAdapter } = require('./identity/twilio');
-        return new TwilioAdapter();
+        throw new Error('Twilio adapter: coming Week 7');
       case 'vonage':
-        const { VonageAdapter } = require('./identity/vonage');
-        return new VonageAdapter();
+        throw new Error('Vonage adapter: not yet implemented');
       default:
         throw new Error(`Unknown OTP adapter: ${config.otp}`);
     }
@@ -79,11 +72,9 @@ export class AdapterFactory {
   static getIdentityAdapter(config: DealerAdapterConfig): IdentityAdapter {
     switch (config.identity) {
       case 'persona':
-        const { PersonaAdapter } = require('./identity/persona');
-        return new PersonaAdapter();
+        throw new Error('Persona adapter: coming Week 7');
       case 'trulioo':
-        const { TruliooAdapter } = require('./identity/trulioo');
-        return new TruliooAdapter();
+        throw new Error('Trulioo adapter: not yet implemented');
       default:
         throw new Error(`Unknown identity adapter: ${config.identity}`);
     }
@@ -92,14 +83,11 @@ export class AdapterFactory {
   static getFinanceAdapter(config: DealerAdapterConfig): FinanceAdapter {
     switch (config.finance) {
       case 'jdpower':
-        const { JDPowerAdapter } = require('./finance/jdpower');
-        return new JDPowerAdapter();
+        throw new Error('JD Power adapter: coming Week 4');
       case 'chrome':
-        const { ChromeAdapter } = require('./finance/chrome');
-        return new ChromeAdapter();
+        throw new Error('Chrome adapter: coming Week 4');
       case 'relay_native':
-        const { RelayCalculator } = require('./finance/calculator');
-        return new RelayCalculator();
+        throw new Error('Relay calculator: coming Week 4');
       default:
         throw new Error(`Unknown finance adapter: ${config.finance}`);
     }
@@ -108,11 +96,9 @@ export class AdapterFactory {
   static getDocumentAdapter(config: DealerAdapterConfig): DocumentAdapter {
     switch (config.documents) {
       case 'relay_native':
-        const { RelayDocumentAdapter } = require('./documents/relay');
-        return new RelayDocumentAdapter();
+        throw new Error('Relay document adapter: coming Week 7');
       case 'docusign':
-        const { DocuSignAdapter } = require('./documents/docusign');
-        return new DocuSignAdapter();
+        throw new Error('DocuSign adapter: not yet implemented');
       default:
         throw new Error(`Unknown document adapter: ${config.documents}`);
     }
