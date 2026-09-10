@@ -1,0 +1,18 @@
+{
+  "name": "relay-ai-platform",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/kiosk",
+    "apps/backend"
+  ],
+  "scripts": {
+    "dev:kiosk": "npm run dev --workspace=apps/kiosk",
+    "dev:backend": "npm run dev --workspace=apps/backend",
+    "build": "npm run build --workspaces"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "prettier": "^3.1.0"
+  }
+}
