@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
-    "@deepgram/sdk": "^5.10.0"
+    "@deepgram/sdk": "^5.10.0",
+    "@fastify/multipart": "^10.1.1"
   }
 }

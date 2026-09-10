@@ -1,21 +1,49 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 
 const API_URL = 'http://localhost:3001';
 
+const LANGUAGES = [
+  { code: 'en', label: 'English' },
+  { code: 'fr', label: 'Français' },
+  { code: 'es', label: 'Español' },
+  { code: 'fa', label: 'فارسی' },
+  { code: 'zh', label: '中文' },
+];
+
 export default function Home() {
-  const [started, setStarted] = useState(false);
+  const [screen, setScreen] = useState<'welcome' | 'conversation'>('welcome');
+  const [language, setLanguage] = useState('en');
   const [messages, setMessages] = useState<Array<{ role: string; text: string }>>([]);
+  const [transcript, setTranscript] = useState('');
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [state, setState] = useState<any>(null);
-  const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [state, setState] = useState<any>(null);
+  const [pulseSize, setPulseSize] = useState(1);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const pulseRef = useRef<any>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Pulse animation when listening
+  useEffect(() => {
+    if (isListening) {
+      pulseRef.current = setInterval(() => {
+        setPulseSize(s => s === 1 ? 1.3 : 1);
+      }, 600);
+    } else {
+      clearInterval(pulseRef.current);
+      setPulseSize(1);
+    }
+    return () => clearInterval(pulseRef.current);
+  }, [isListening]);
 
   const playAudio = async (text: string) => {
     try {
@@ -29,24 +57,29 @@ export default function Home() {
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audioRef.current = audio;
-      audio.onended = () => setIsSpeaking(false);
+      audio.onended = () => {
+        setIsSpeaking(false);
+        // Auto start listening after Relay speaks
+        startListening();
+      };
       audio.play();
     } catch {
       setIsSpeaking(false);
     }
   };
 
-  const startSession = async () => {
+  const startSession = async (lang: string) => {
+    setLanguage(lang);
     setLoading(true);
     try {
       const res = await fetch(`${API_URL}/api/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kioskId: 'kiosk-1', language: 'en' }),
+        body: JSON.stringify({ kioskId: 'kiosk-1', language: lang }),
       });
       const data = await res.json();
       setState(data.state);
-      setStarted(true);
+      setScreen('conversation');
 
       const msgRes = await fetch(`${API_URL}/api/sessions/${data.sessionId}/message`, {
         method: 'POST',
@@ -64,8 +97,9 @@ export default function Home() {
   };
 
   const sendMessage = async (text: string) => {
-    if (!text.trim() || loading) return;
+    if (!text.trim() || loading || isSpeaking) return;
     setInput('');
+    setTranscript('');
     setMessages(prev => [...prev, { role: 'customer', text }]);
     setLoading(true);
 
@@ -85,163 +119,373 @@ export default function Home() {
     setLoading(false);
   };
 
-  if (!started) {
+  const startListening = async () => {
+    if (isSpeaking || isListening) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+      setIsListening(true);
+      setTranscript('');
+
+      mediaRecorder.ondataavailable = (e) => {
+        audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        setIsListening(false);
+        stream.getTracks().forEach(t => t.stop());
+
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+
+        // Send to backend for transcription
+        const formData = new FormData();
+        formData.append('audio', audioBlob, 'recording.webm');
+        formData.append('language', language);
+
+        try {
+          const res = await fetch(`${API_URL}/api/voice/transcribe-form`, {
+            method: 'POST',
+            body: formData,
+          });
+          const data = await res.json();
+          if (data.text && data.text.trim()) {
+            setTranscript(data.text);
+            await sendMessage(data.text);
+          }
+        } catch (err) {
+          console.error('Transcription error:', err);
+        }
+      };
+
+      mediaRecorder.start();
+
+      // Auto stop after 8 seconds of silence or user taps
+    } catch (err) {
+      console.error('Mic error:', err);
+      setIsListening(false);
+    }
+  };
+
+  const stopListening = () => {
+    if (mediaRecorderRef.current && isListening) {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  // WELCOME SCREEN
+  if (screen === 'welcome') {
     return (
       <div style={{
         minHeight: '100vh',
-        background: 'linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #0f3460 100%)',
+        background: 'linear-gradient(160deg, #0a0a0a 0%, #0d1117 60%, #0f1923 100%)',
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif',
+        color: 'white',
+        padding: '40px',
       }}>
-        <div style={{ textAlign: 'center', color: 'white' }}>
-          <div style={{ fontSize: '13px', letterSpacing: '4px', opacity: 0.5, marginBottom: '24px' }}>
-            NEWROADS MAZDA
-          </div>
-          <h1 style={{ fontSize: '80px', fontWeight: '700', margin: '0 0 8px', letterSpacing: '-3px' }}>
-            Relay
-          </h1>
-          <p style={{ fontSize: '18px', opacity: 0.6, marginBottom: '60px', fontWeight: '300' }}>
-            Your personal automotive guide
-          </p>
-          <button
-            onClick={startSession}
-            disabled={loading}
-            style={{
-              background: 'white',
-              color: '#0a0a0a',
-              border: 'none',
-              padding: '18px 64px',
-              borderRadius: '50px',
-              fontSize: '17px',
-              fontWeight: '600',
-              cursor: 'pointer',
-              letterSpacing: '0.5px',
-            }}>
-            {loading ? 'Starting...' : 'Begin'}
-          </button>
+        {/* Dealer name */}
+        <div style={{
+          fontSize: '11px',
+          letterSpacing: '5px',
+          opacity: 0.35,
+          marginBottom: '48px',
+          textTransform: 'uppercase',
+        }}>
+          NewRoads Mazda
         </div>
+
+        {/* Relay wordmark */}
+        <img
+          src="/Relay Official Logo.png"
+          alt="Relay"
+          style={{
+            width: '280px',
+            marginBottom: '24px',
+            filter: 'drop-shadow(0 0 40px rgba(30,100,255,0.4))',
+          }}
+        />
+
+        <p style={{
+          fontSize: '15px',
+          opacity: 0.5,
+          marginBottom: '72px',
+          fontWeight: '200',
+          letterSpacing: '6px',
+          textTransform: 'uppercase',
+        }}>
+          Your Personal Automotive Companion
+        </p>
+
+        {/* Language selector */}
+        <div style={{
+          display: 'flex',
+          gap: '10px',
+          marginBottom: '48px',
+          flexWrap: 'wrap',
+          justifyContent: 'center',
+        }}>
+          {LANGUAGES.map(lang => (
+            <button
+              key={lang.code}
+              onClick={() => setLanguage(lang.code)}
+              style={{
+                background: language === lang.code ? 'rgba(255,255,255,0.15)' : 'transparent',
+                border: `1px solid ${language === lang.code ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.12)'}`,
+                color: language === lang.code ? 'white' : 'rgba(255,255,255,0.4)',
+                padding: '8px 18px',
+                borderRadius: '50px',
+                fontSize: '13px',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+              }}>
+              {lang.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Begin button */}
+        <button
+          onClick={() => startSession(language)}
+          disabled={loading}
+          style={{
+            background: 'white',
+            color: '#0a0a0a',
+            border: 'none',
+            padding: '20px 72px',
+            borderRadius: '50px',
+            fontSize: '17px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            letterSpacing: '0.3px',
+            boxShadow: '0 0 40px rgba(255,255,255,0.15)',
+            transition: 'all 0.2s',
+          }}>
+          {loading ? 'Starting...' : 'Begin'}
+        </button>
+
+        <p style={{ marginTop: '32px', fontSize: '12px', opacity: 0.2 }}>
+          Tap and speak — Relay understands you
+        </p>
       </div>
     );
   }
 
+  // CONVERSATION SCREEN
   return (
     <div style={{
       minHeight: '100vh',
       background: '#0a0a0a',
       display: 'flex',
       flexDirection: 'column',
-      fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif',
       color: 'white',
     }}>
       {/* Header */}
       <div style={{
-        padding: '20px 32px',
-        borderBottom: '1px solid rgba(255,255,255,0.08)',
+        padding: '16px 28px',
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
       }}>
-        <div style={{ fontSize: '20px', fontWeight: '700', letterSpacing: '-0.5px' }}>Relay</div>
+        <div style={{ fontSize: '18px', fontWeight: '700', letterSpacing: '-0.5px' }}>Relay</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           {isSpeaking && (
-            <div style={{ 
-              width: '8px', height: '8px', borderRadius: '50%', 
-              background: '#4ade80', animation: 'pulse 1s infinite' 
-            }} />
+            <div style={{
+              display: 'flex', gap: '3px', alignItems: 'center'
+            }}>
+              {[1,2,3,4].map(i => (
+                <div key={i} style={{
+                  width: '3px',
+                  height: `${8 + i * 4}px`,
+                  background: '#4ade80',
+                  borderRadius: '2px',
+                  animation: `wave${i} 0.8s ease-in-out infinite`,
+                }} />
+              ))}
+            </div>
           )}
-          <div style={{ fontSize: '12px', opacity: 0.4, letterSpacing: '2px' }}>
-            {isSpeaking ? 'SPEAKING' : state?.currentStage}
+          <div style={{ fontSize: '11px', opacity: 0.3, letterSpacing: '2px' }}>
+            {isSpeaking ? 'SPEAKING' : isListening ? 'LISTENING' : state?.currentStage}
           </div>
         </div>
-        <div style={{ fontSize: '12px', opacity: 0.4 }}>NewRoads Mazda</div>
+        <div style={{ fontSize: '11px', opacity: 0.3 }}>NewRoads Mazda</div>
       </div>
 
-      {/* Messages */}
+      {/* Conversation area */}
       <div style={{
         flex: 1,
         overflowY: 'auto',
-        padding: '32px',
+        padding: '28px 32px',
         display: 'flex',
         flexDirection: 'column',
-        gap: '20px',
+        gap: '16px',
       }}>
         {messages.map((msg, i) => (
           <div key={i} style={{
             display: 'flex',
             justifyContent: msg.role === 'customer' ? 'flex-end' : 'flex-start',
           }}>
+            {msg.role === 'relay' && (
+              <div style={{
+                width: '28px', height: '28px', borderRadius: '50%',
+                background: 'rgba(255,255,255,0.08)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '11px', marginRight: '10px', flexShrink: 0, marginTop: '4px',
+              }}>R</div>
+            )}
             <div style={{
-              maxWidth: '65%',
-              padding: '14px 20px',
-              borderRadius: msg.role === 'customer' ? '20px 20px 4px 20px' : '20px 20px 20px 4px',
-              background: msg.role === 'customer' ? '#0f3460' : 'rgba(255,255,255,0.08)',
-              fontSize: '16px',
-              lineHeight: '1.5',
+              maxWidth: '60%',
+              padding: '12px 18px',
+              borderRadius: msg.role === 'customer' ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
+              background: msg.role === 'customer'
+                ? 'linear-gradient(135deg, #0f3460, #1a4a7a)'
+                : 'rgba(255,255,255,0.07)',
+              fontSize: '15px',
+              lineHeight: '1.6',
+              color: 'white',
             }}>
               {msg.text}
             </div>
           </div>
         ))}
-        {loading && (
-          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+
+        {/* Live transcript */}
+        {transcript && (
+          <div style={{
+            display: 'flex', justifyContent: 'flex-end',
+          }}>
             <div style={{
-              padding: '14px 20px',
-              borderRadius: '20px 20px 20px 4px',
-              background: 'rgba(255,255,255,0.08)',
-              fontSize: '16px',
-              opacity: 0.5,
+              maxWidth: '60%',
+              padding: '12px 18px',
+              borderRadius: '18px 18px 4px 18px',
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px dashed rgba(255,255,255,0.15)',
+              fontSize: '15px',
+              lineHeight: '1.6',
+              color: 'rgba(255,255,255,0.6)',
+              fontStyle: 'italic',
             }}>
-              Relay is thinking...
+              {transcript}
+            </div>
+          </div>
+        )}
+
+        {loading && !isListening && (
+          <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: '10px' }}>
+            <div style={{
+              width: '28px', height: '28px', borderRadius: '50%',
+              background: 'rgba(255,255,255,0.08)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '11px',
+            }}>R</div>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {[0,1,2].map(i => (
+                <div key={i} style={{
+                  width: '6px', height: '6px', borderRadius: '50%',
+                  background: 'rgba(255,255,255,0.4)',
+                  animation: `bounce 1s ease-in-out ${i * 0.2}s infinite`,
+                }} />
+              ))}
             </div>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
+      {/* Voice orb + text input */}
       <div style={{
-        padding: '20px 32px',
-        borderTop: '1px solid rgba(255,255,255,0.08)',
+        padding: '20px 28px 32px',
+        borderTop: '1px solid rgba(255,255,255,0.06)',
         display: 'flex',
-        gap: '12px',
+        flexDirection: 'column',
         alignItems: 'center',
+        gap: '16px',
       }}>
-        <input
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && sendMessage(input)}
-          placeholder="Type your message..."
-          disabled={loading || isSpeaking}
-          style={{
-            flex: 1,
-            background: 'rgba(255,255,255,0.08)',
-            border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: '50px',
-            padding: '14px 24px',
-            color: 'white',
-            fontSize: '16px',
-            outline: 'none',
-          }}
-        />
+        {/* Voice orb - main interaction */}
         <button
-          onClick={() => sendMessage(input)}
-          disabled={loading || isSpeaking}
+          onClick={isListening ? stopListening : startListening}
+          disabled={isSpeaking || loading}
           style={{
-            background: 'white',
-            color: '#0a0a0a',
+            width: '80px',
+            height: '80px',
+            borderRadius: '50%',
             border: 'none',
-            borderRadius: '50px',
-            padding: '14px 32px',
-            fontSize: '16px',
-            fontWeight: '600',
-            cursor: 'pointer',
-            opacity: loading || isSpeaking ? 0.5 : 1,
+            background: isListening
+              ? 'radial-gradient(circle, #ef4444, #dc2626)'
+              : 'radial-gradient(circle, rgba(255,255,255,0.15), rgba(255,255,255,0.05))',
+            cursor: isSpeaking || loading ? 'default' : 'pointer',
+            transform: `scale(${isListening ? pulseSize : 1})`,
+            transition: 'transform 0.3s ease, background 0.3s ease',
+            boxShadow: isListening
+              ? '0 0 30px rgba(239,68,68,0.4)'
+              : '0 0 20px rgba(255,255,255,0.08)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '28px',
           }}>
-          Send
+          {isListening ? '⏹' : isSpeaking ? '🔊' : '🎤'}
         </button>
+
+        <div style={{ fontSize: '11px', opacity: 0.3, letterSpacing: '1px' }}>
+          {isListening ? 'TAP TO SEND' : isSpeaking ? 'RELAY IS SPEAKING' : 'TAP TO SPEAK'}
+        </div>
+
+        {/* Text input (secondary) */}
+        <div style={{
+          display: 'flex',
+          gap: '10px',
+          width: '100%',
+          maxWidth: '500px',
+        }}>
+          <input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && sendMessage(input)}
+            placeholder="Or type here..."
+            disabled={loading || isSpeaking || isListening}
+            style={{
+              flex: 1,
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: '50px',
+              padding: '12px 20px',
+              color: 'white',
+              fontSize: '14px',
+              outline: 'none',
+            }}
+          />
+          <button
+            onClick={() => sendMessage(input)}
+            disabled={loading || isSpeaking || isListening || !input.trim()}
+            style={{
+              background: 'rgba(255,255,255,0.1)',
+              color: 'white',
+              border: '1px solid rgba(255,255,255,0.12)',
+              borderRadius: '50px',
+              padding: '12px 24px',
+              fontSize: '14px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              opacity: !input.trim() ? 0.3 : 1,
+            }}>
+            Send
+          </button>
+        </div>
       </div>
+
+      <style>{`
+        @keyframes bounce {
+          0%, 100% { transform: translateY(0); opacity: 0.4; }
+          50% { transform: translateY(-6px); opacity: 1; }
+        }
+      `}</style>
     </div>
   );
 }

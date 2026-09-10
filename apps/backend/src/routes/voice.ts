@@ -24,6 +24,33 @@ export const voiceRoutes = async (app: FastifyInstance) => {
     }
   });
 
+    // STT: Accept audio form upload + transcribe
+  app.post('/api/voice/transcribe-form', async (request, reply) => {
+    try {
+      const data = await request.file();
+      if (!data) return reply.status(400).send({ error: 'No audio file' });
+
+      const chunks: Buffer[] = [];
+      for await (const chunk of data.file) {
+        chunks.push(chunk);
+      }
+      const audioBuffer = Buffer.concat(chunks);
+      const language = (request.query as any).language || 'en';
+
+      const { transcribeAudio } = await import('../services/voice');
+      const result = await transcribeAudio(audioBuffer, language);
+
+      return reply.send({
+        success: true,
+        text: result.text,
+        confidence: result.confidence,
+      });
+
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message });
+    }
+  });
+
   // SPEAK + PROCESS: Full voice round trip
   app.post('/api/voice/conversation', async (request, reply) => {
     try {

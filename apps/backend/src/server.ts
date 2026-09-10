@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { testConnection } from './services/supabase';
 import { sessionRoutes } from './routes/session';
 import { voiceRoutes } from './routes/voice';
+import multipart from '@fastify/multipart';
 
 dotenv.config();
 
@@ -12,6 +13,8 @@ const app = Fastify({ logger: true });
 app.register(cors, {
   origin: process.env.KIOSK_URL || 'http://localhost:3000',
 });
+
+app.register(multipart);
 
 app.get('/health', async () => {
   return { 
