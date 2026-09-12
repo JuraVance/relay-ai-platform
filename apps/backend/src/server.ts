@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { testConnection } from './services/supabase';
 import { sessionRoutes } from './routes/session';
 import { voiceRoutes } from './routes/voice';
+import { inventoryRoutes } from './routes/inventory';
 import multipart from '@fastify/multipart';
 
 dotenv.config();
@@ -26,6 +27,7 @@ app.get('/health', async () => {
 
 app.register(sessionRoutes);
 app.register(voiceRoutes);
+app.register(inventoryRoutes);
 const start = async () => {
   try {
     await testConnection();
