@@ -2,6 +2,7 @@
 // EDEALER SFTP INVENTORY ADAPTER
 // Implements InventoryAdapter interface
 // Vendor agnostic — swap via AdapterFactory
+// Credentials stored in dealer adapter_config in Supabase
 // ============================================================
 
 import { InventoryAdapter, NormalizedVehicle, VehicleFilters, SyncResult } from './types';
@@ -14,24 +15,37 @@ dotenv.config({ path: path.join(__dirname, '../../../.env') });
 export class EdealerAdapter implements InventoryAdapter {
   name = 'edealer';
 
+  // --------------------------------------------------------
+  // SYNC: Download CSV from SFTP and load into Supabase
+  // --------------------------------------------------------
+
   async sync(dealerId: string): Promise<SyncResult> {
     console.log(`📦 eDealer SFTP sync starting for dealer: ${dealerId}`);
 
     try {
-      const { data: dealer } = await supabase
+      // Get dealer from database
+      const { data: dealer, error: dealerError } = await supabase
         .from('dealers')
         .select('*')
         .eq('id', dealerId)
         .single();
 
-      if (!dealer) throw new Error(`Dealer not found: ${dealerId}`);
+      if (dealerError || !dealer) throw new Error(`Dealer not found: ${dealerId}`);
 
-      const csvData = await this.downloadFromSFTP();
+      // Get inventory config from dealer adapter_config
+      const inventoryConfig = dealer.adapter_config?.inventory;
+      if (!inventoryConfig) throw new Error(`No inventory config for dealer: ${dealerId}`);
+
+      // Download CSV from SFTP using dealer config
+      const csvData = await this.downloadFromSFTP(inventoryConfig);
+
+      // Parse CSV
       const rows = this.parseCSV(csvData);
       console.log(`📋 Total rows in feed: ${rows.length}`);
 
-      const edealerId = process.env.EDEALER_ID_NEWROADS_MAZDA;
-      const dealerRows = rows.filter(row =>
+      // Filter by dealer ID from config
+      const edealerId = inventoryConfig.dealer_id;
+      const dealerRows = rows.filter((row: Record<string, string>) =>
         !edealerId || row['Dealer_ID'] === edealerId
       );
       console.log(`🚗 Rows for this dealer: ${dealerRows.length}`);
@@ -63,6 +77,7 @@ export class EdealerAdapter implements InventoryAdapter {
         }
       }
 
+      // Log sync status
       await supabase.from('inventory_sync_status').insert({
         dealer_id: dealerId,
         source: 'edealer',
@@ -75,30 +90,40 @@ export class EdealerAdapter implements InventoryAdapter {
 
       console.log(`✅ Sync complete: ${added} vehicles loaded, ${errors} errors`);
 
-      return { added, updated, removed: 0, errors, source: 'edealer', timestamp: new Date() };
+      return {
+        added,
+        updated,
+        removed: 0,
+        errors,
+        source: 'edealer',
+        timestamp: new Date(),
+      };
 
     } catch (err: any) {
-      console.error('❌ SFTP sync failed:', err.message);
+      console.error('❌ Sync failed:', err.message);
       throw err;
     }
   }
 
-  private async downloadFromSFTP(): Promise<string> {
+  // --------------------------------------------------------
+  // DOWNLOAD: Get CSV from SFTP using dealer config
+  // --------------------------------------------------------
+
+  private async downloadFromSFTP(config: any): Promise<string> {
     const SftpClient = require('ssh2-sftp-client');
     const sftp = new SftpClient();
 
     try {
       await sftp.connect({
-        host: process.env.SFTP_HOST,
-        port: parseInt(process.env.SFTP_PORT || '22'),
-        username: process.env.SFTP_USERNAME,
-        password: process.env.SFTP_PASSWORD,
+        host: config.sftp_host,
+        port: config.sftp_port || 22,
+        username: config.sftp_username,
+        password: config.sftp_password,
       });
 
       console.log('✅ SFTP connected');
 
-      const filename = process.env.EDEALER_FILENAME_NEWROADS_MAZDA;
-      const remotePath = `./${filename}`;
+      const remotePath = `./${config.filename}`;
       console.log(`📥 Downloading: ${remotePath}`);
 
       const buffer = await sftp.get(remotePath);
@@ -112,22 +137,31 @@ export class EdealerAdapter implements InventoryAdapter {
     }
   }
 
-     private parseCSV(csvData: string): Record<string, string>[] {
-    const { execSync } = require('child_process');
-    const path = require('path');
-    
-    const scriptPath = path.join(__dirname, 'parse_csv.py');
-    
+  // --------------------------------------------------------
+  // PARSE: CSV string to array of objects
+  // --------------------------------------------------------
+
+  private parseCSV(csvData: string): Record<string, string>[] {
+    const { parse } = require('csv-parse/sync');
+
+    // Fix Windows line endings
+    const normalized = csvData.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
     try {
-      const result = execSync(`python3 "${scriptPath}"`, {
-        input: csvData,
-        maxBuffer: 50 * 1024 * 1024,
-        encoding: 'utf8',
+      const records = parse(normalized, {
+        delimiter: ',',
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+        quote: '"',
+        escape: '"',
+        relax_quotes: false,
+        relax_column_count: false,
+        cast: false,
       });
-      
-      const records = JSON.parse(result);
+
       console.log(`📋 Parsed ${records.length} vehicle rows`);
-      
+
       if (records.length > 0) {
         console.log('✅ Price check:', {
           VIN: records[0]['VIN'],
@@ -135,13 +169,12 @@ export class EdealerAdapter implements InventoryAdapter {
           Selling_Price: records[0]['Selling_Price'],
         });
       }
-      
+
       return records;
+
     } catch (err: any) {
-      console.error('❌ Python parser error FULL:', err);
-      // Fall back to csv-parse
-      const { parse } = require('csv-parse/sync');
-      const normalized = csvData.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      // Fallback with relaxed settings
+      console.warn('⚠️ Strict parse failed, trying relaxed:', err.message);
       const records = parse(normalized, {
         delimiter: ',',
         columns: true,
@@ -151,16 +184,27 @@ export class EdealerAdapter implements InventoryAdapter {
         trim: true,
         quote: '"',
       });
+
       console.log(`📋 Fallback parsed ${records.length} rows`);
+
       if (records.length > 0) {
-        console.log('Fallback price check:', records[0]['Starting_Price'], records[0]['Selling_Price']);
+        console.log('✅ Fallback price check:', {
+          VIN: records[0]['VIN'],
+          Starting_Price: records[0]['Starting_Price'],
+          Selling_Price: records[0]['Selling_Price'],
+        });
       }
+
       return records;
     }
   }
 
+  // --------------------------------------------------------
+  // NORMALIZE: Map eDealer fields to Relay schema
+  // --------------------------------------------------------
+
   private normalizeRow(row: Record<string, string>, dealerId: string): any {
-    // Parse images — pipe separated
+    // Parse images — semicolon separated
     const imageUrls = row['Images']
       ? row['Images'].split(';').map((u: string) => u.trim()).filter(Boolean)
       : [];
@@ -191,9 +235,10 @@ export class EdealerAdapter implements InventoryAdapter {
       vdp_url: row['VDP_URL'] || null,
       vehicle_id: row['Vehicle_ID'] || null,
       sub_model: row['Sub_Model'] || null,
+      condition: row['Condition'] || null,
     };
 
-    // Parse prices — remove any non-numeric except decimal
+    // Parse prices
     const parsePrice = (val: string): number | null => {
       if (!val || val.trim() === '' || val.trim() === '0') return null;
       const cleaned = parseFloat(val.replace(/[^0-9.]/g, ''));
@@ -224,6 +269,10 @@ export class EdealerAdapter implements InventoryAdapter {
       source: 'edealer',
     };
   }
+
+  // --------------------------------------------------------
+  // QUERY: Get vehicles for Relay recommendations
+  // --------------------------------------------------------
 
   async getVehicles(dealerId: string, filters?: VehicleFilters): Promise<NormalizedVehicle[]> {
     let query = supabase
