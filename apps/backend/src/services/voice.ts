@@ -91,28 +91,48 @@ class GrokSTT implements STTProvider {
 class ElevenLabsSTT implements STTProvider {
   async transcribe(audioBuffer: Buffer, language = 'en') {
     try {
-      const FormData = require('form-data');
-      const form = new FormData();
-      form.append('file', audioBuffer, {
-        filename: 'audio.webm',
-        contentType: 'audio/webm',
-      });
-      form.append('model_id', 'scribe_v1');
+      const boundary = `----RelayBoundary${Date.now()}`;
+      
+      // Build multipart body manually
+      const parts: Buffer[] = [];
+      
+      // file field
+      parts.push(Buffer.from(
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="file"; filename="audio.webm"\r\n` +
+        `Content-Type: audio/webm\r\n\r\n`
+      ));
+      parts.push(audioBuffer);
+      parts.push(Buffer.from('\r\n'));
+      
+      // model_id field
+      parts.push(Buffer.from(
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="model_id"\r\n\r\n` +
+        `scribe_v2\r\n`
+      ));
+      
+      // closing boundary
+      parts.push(Buffer.from(`--${boundary}--\r\n`));
+      
+      const body = Buffer.concat(parts);
 
       const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
         method: 'POST',
         headers: {
           'xi-api-key': process.env.ELEVENLABS_API_KEY!,
-          ...form.getHeaders(),
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'Content-Length': body.length.toString(),
         },
-        body: form,
+        body,
       });
 
       console.log('ElevenLabs STT status:', response.status);
       const responseText = await response.text();
-      console.log('ElevenLabs STT response:', responseText);
+      console.log('ElevenLabs STT response:', responseText.substring(0, 200));
 
       if (!response.ok) throw new Error(responseText);
+
       const data = JSON.parse(responseText) as { text: string };
       return { text: data.text || '', confidence: 0.95 };
 
